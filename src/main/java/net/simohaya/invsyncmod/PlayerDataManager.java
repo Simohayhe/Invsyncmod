@@ -1,14 +1,16 @@
 package net.simohaya.invsyncmod;
 
 import com.google.gson.*;
+import net.minecraft.inventory.Inventories;
+import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
-import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtList;
-import net.minecraft.nbt.NbtString;
 import net.minecraft.nbt.NbtOps;
+import net.minecraft.nbt.NbtString;
+import net.minecraft.nbt.NbtElement;
 import net.minecraft.registry.RegistryWrapper;
 import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.item.ItemStack;
+import net.minecraft.util.collection.DefaultedList;
 import net.minecraft.entity.effect.StatusEffectInstance;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,12 +24,6 @@ public class PlayerDataManager {
     private static final Logger LOGGER = LoggerFactory.getLogger("InventorySync/Data");
     private static final Gson GSON = new GsonBuilder().create();
 
-    // インベントリのスロット定数
-    // PlayerInventory: 0-8=ホットバー, 9-35=メイン, 36-39=防具, 40=オフハンド
-    private static final int OFFHAND_SLOT = 40;
-    private static final int ARMOR_START  = 36;
-    private static final int ARMOR_END    = 40;
-
     private final DatabaseManager db;
 
     public PlayerDataManager(DatabaseManager db) {
@@ -39,7 +35,7 @@ public class PlayerDataManager {
     // -------------------------------------------------------------------
 
     public void savePlayer(ServerPlayerEntity player, String serverName) {
-        RegistryWrapper.WrapperLookup lookup = player.getServerWorld().getRegistryManager();
+        RegistryWrapper.WrapperLookup lookup = player.getRegistryManager();
 
         PlayerData data = new PlayerData(
                 player.getUuid(),
@@ -49,9 +45,7 @@ public class PlayerDataManager {
                 player.totalExperience,
                 player.experienceLevel,
                 player.experienceProgress,
-                serializeSlots(player, 0, 36, lookup),   // メインインベントリ
-                serializeSlot(player, OFFHAND_SLOT, lookup),  // オフハンド
-                serializeSlots(player, ARMOR_START, ARMOR_END, lookup), // 防具
+                serializeInventory(player, lookup),
                 serializeEffects(player),
                 serverName
         );
@@ -72,7 +66,7 @@ public class PlayerDataManager {
         }
 
         PlayerData data = opt.get();
-        RegistryWrapper.WrapperLookup lookup = player.getServerWorld().getRegistryManager();
+        RegistryWrapper.WrapperLookup lookup = player.getRegistryManager();
 
         player.setHealth(Math.min(data.health(), player.getMaxHealth()));
         player.getHungerManager().setFoodLevel(data.foodLevel());
@@ -81,9 +75,7 @@ public class PlayerDataManager {
         player.experienceLevel    = data.expLevel();
         player.experienceProgress = data.expProgress();
 
-        if (data.inventoryJson() != null) deserializeSlots(player, data.inventoryJson(), 0, lookup);
-        if (data.offhandJson()   != null) deserializeSlot(player, data.offhandJson(), OFFHAND_SLOT, lookup);
-        if (data.armorJson()     != null) deserializeSlots(player, data.armorJson(), ARMOR_START, lookup);
+        if (data.inventoryJson() != null) deserializeInventory(player, data.inventoryJson(), lookup);
 
         player.clearStatusEffects();
         if (data.effectsJson() != null) deserializeEffects(player, data.effectsJson());
@@ -92,21 +84,19 @@ public class PlayerDataManager {
     }
 
     // -------------------------------------------------------------------
-    // シリアライズ
+    // シリアライズ（Inventories ユーティリティを使用）
     // -------------------------------------------------------------------
 
-    /** 指定範囲のスロットを JSON 配列に変換する */
-    private String serializeSlots(ServerPlayerEntity player, int from, int to, RegistryWrapper.WrapperLookup lookup) {
-        JsonArray arr = new JsonArray();
-        for (int i = from; i < to; i++) {
-            arr.add(itemToJson(player.getInventory().getStack(i), i, lookup));
-        }
-        return GSON.toJson(arr);
-    }
+    private String serializeInventory(ServerPlayerEntity player, RegistryWrapper.WrapperLookup lookup) {
+        // メイン(36) + オフハンド(1) + 防具(4) = 41スロット全部まとめて保存
+        DefaultedList<ItemStack> combined = DefaultedList.ofSize(41, ItemStack.EMPTY);
+        for (int i = 0; i < 36; i++) combined.set(i, player.getInventory().getStack(i));
+        combined.set(36, player.getInventory().getStack(40)); // オフハンド
+        for (int i = 0; i < 4; i++) combined.set(37 + i, player.getInventory().getStack(36 + i)); // 防具
 
-    /** 単一スロットを JSON オブジェクトに変換する */
-    private String serializeSlot(ServerPlayerEntity player, int slot, RegistryWrapper.WrapperLookup lookup) {
-        return GSON.toJson(itemToJson(player.getInventory().getStack(slot), slot, lookup));
+        NbtCompound nbt = new NbtCompound();
+        Inventories.writeNbt(nbt, combined, true, lookup);
+        return GSON.toJson(nbtToJson(nbt));
     }
 
     private String serializeEffects(ServerPlayerEntity player) {
@@ -126,20 +116,14 @@ public class PlayerDataManager {
     // デシリアライズ
     // -------------------------------------------------------------------
 
-    /** JSON 配列からスロット群を復元する（slotOffset: armor は 36 から始まるためオフセット調整用）*/
-    private void deserializeSlots(ServerPlayerEntity player, String json, int slotOffset, RegistryWrapper.WrapperLookup lookup) {
-        JsonArray arr = JsonParser.parseString(json).getAsJsonArray();
-        for (JsonElement el : arr) {
-            JsonObject obj = el.getAsJsonObject();
-            int slot = obj.get("slot").getAsInt();
-            player.getInventory().setStack(slot, jsonToItem(obj, lookup));
-        }
-    }
+    private void deserializeInventory(ServerPlayerEntity player, String json, RegistryWrapper.WrapperLookup lookup) {
+        NbtCompound nbt = jsonToNbt(JsonParser.parseString(json).getAsJsonObject());
+        DefaultedList<ItemStack> combined = DefaultedList.ofSize(41, ItemStack.EMPTY);
+        Inventories.readNbt(nbt, combined, lookup);
 
-    /** JSON オブジェクトから単一スロットを復元する */
-    private void deserializeSlot(ServerPlayerEntity player, String json, int slot, RegistryWrapper.WrapperLookup lookup) {
-        JsonObject obj = JsonParser.parseString(json).getAsJsonObject();
-        player.getInventory().setStack(slot, jsonToItem(obj, lookup));
+        for (int i = 0; i < 36; i++) player.getInventory().setStack(i, combined.get(i));
+        player.getInventory().setStack(40, combined.get(36)); // オフハンド
+        for (int i = 0; i < 4; i++) player.getInventory().setStack(36 + i, combined.get(37 + i)); // 防具
     }
 
     private void deserializeEffects(ServerPlayerEntity player, String json) {
@@ -151,30 +135,6 @@ public class PlayerDataManager {
                     .result()
                     .ifPresent(player::addStatusEffect);
         }
-    }
-
-    // -------------------------------------------------------------------
-    // ItemStack ↔ JsonObject
-    // -------------------------------------------------------------------
-
-    private JsonObject itemToJson(ItemStack stack, int slot, RegistryWrapper.WrapperLookup lookup) {
-        JsonObject obj = new JsonObject();
-        obj.addProperty("slot", slot);
-        if (stack.isEmpty()) {
-            obj.addProperty("empty", true);
-        } else {
-            // toNbt(RegistryWrapper.WrapperLookup) — 1.21.x Yarn API
-            obj.add("nbt", nbtToJson(stack.toNbt(lookup)));
-        }
-        return obj;
-    }
-
-    private ItemStack jsonToItem(JsonObject obj, RegistryWrapper.WrapperLookup lookup) {
-        if (obj.has("empty") && obj.get("empty").getAsBoolean()) return ItemStack.EMPTY;
-        if (!obj.has("nbt")) return ItemStack.EMPTY;
-        // fromNbt(RegistryWrapper.WrapperLookup, NbtCompound) — 1.21.x Yarn API
-        return ItemStack.fromNbt(lookup, jsonToNbt(obj.get("nbt").getAsJsonObject()))
-                .orElse(ItemStack.EMPTY);
     }
 
     // -------------------------------------------------------------------
