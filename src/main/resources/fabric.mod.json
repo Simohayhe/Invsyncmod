@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "invsyncmod",
+  "version": "${version}",
+  "name": "Invsyncmod",
+  "description": "",
+  "authors": [],
+  "contact": {},
+  "license": "All-Rights-Reserved",
+  "icon": "assets/invsyncmod/icon.png",
+  "environment": "server",
+  "entrypoints": {
+    "main": [
+      "net.simohaya.invsyncmod.Invsyncmod"
+    ]
+  },
+  "mixins": [
+    "invsyncmod.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "minecraft": "${minecraft_version}"
+  }
+}
