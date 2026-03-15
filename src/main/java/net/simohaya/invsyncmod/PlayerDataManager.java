@@ -48,6 +48,27 @@ public class PlayerDataManager {
         LOGGER.info("保存完了: {}", player.getName().getString());
     }
 
+    public void savePlayerSilent(ServerPlayerEntity player, String serverName, boolean doLog) {
+        RegistryWrapper.WrapperLookup lookup = player.getRegistryManager();
+
+        PlayerData data = new PlayerData(
+                player.getUuid(),
+                player.getHealth(),
+                player.getHungerManager().getFoodLevel(),
+                player.getHungerManager().getSaturationLevel(),
+                player.totalExperience,
+                player.experienceLevel,
+                player.experienceProgress,
+                serializeInventory(player, lookup),
+                serializeEffects(player),
+                serverName
+        );
+
+        db.savePlayerData(data);
+        if (doLog) {
+            LOGGER.info("定期保存完了: {}", player.getName().getString());
+        }
+    }
     // -------------------------------------------------------------------
     // 復元
     // -------------------------------------------------------------------

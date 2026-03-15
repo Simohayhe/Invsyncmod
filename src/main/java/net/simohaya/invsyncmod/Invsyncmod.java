@@ -49,10 +49,10 @@ public class Invsyncmod implements ModInitializer {
 
         // 1秒ごとの定期同期を登録
         ServerTickEvents.END_SERVER_TICK.register(server -> {
-            // 20tick = 1秒ごとに実行
             if (server.getTicks() % 20 == 0) {
+                boolean doLog = server.getTicks() % 12000 == 0;
                 for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
-                    playerDataManager.savePlayer(player, serverName);
+                    playerDataManager.savePlayerSilent(player, serverName, doLog);
                 }
             }
         });
