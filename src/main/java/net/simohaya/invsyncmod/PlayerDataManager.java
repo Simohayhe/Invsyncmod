@@ -3,10 +3,7 @@ package net.simohaya.invsyncmod;
 import com.google.gson.*;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
-import net.minecraft.nbt.NbtElement;
-import net.minecraft.nbt.NbtList;
 import net.minecraft.nbt.NbtOps;
-import net.minecraft.nbt.NbtString;
 import net.minecraft.registry.RegistryWrapper;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.entity.effect.StatusEffectInstance;
@@ -81,24 +78,20 @@ public class PlayerDataManager {
     }
 
     // -------------------------------------------------------------------
-    // シリアライズ（Inventories ユーティリティを使用）
+    // シリアライズ
     // -------------------------------------------------------------------
 
     private String serializeInventory(ServerPlayerEntity player, RegistryWrapper.WrapperLookup lookup) {
         JsonArray arr = new JsonArray();
-        // メイン36 + 防具4 + オフハンド1 = 合計41スロット
         int total = player.getInventory().size();
         for (int i = 0; i < total; i++) {
             ItemStack stack = player.getInventory().getStack(i);
             if (!stack.isEmpty()) {
                 JsonObject obj = new JsonObject();
                 obj.addProperty("slot", i);
-                // ItemStack.CODEC でシリアライズ
                 ItemStack.CODEC.encodeStart(lookup.getOps(NbtOps.INSTANCE), stack)
                         .result()
-                        .ifPresent(tag -> {
-                            if (tag instanceof NbtCompound c) obj.add("nbt", nbtToJson(c));
-                        });
+                        .ifPresent(tag -> obj.addProperty("nbt", tag.toString()));
                 arr.add(obj);
             }
         }
@@ -111,9 +104,7 @@ public class PlayerDataManager {
             StatusEffectInstance.CODEC
                     .encodeStart(NbtOps.INSTANCE, effect)
                     .result()
-                    .ifPresent(tag -> {
-                        if (tag instanceof NbtCompound c) arr.add(nbtToJson(c));
-                    });
+                    .ifPresent(tag -> arr.add(tag.toString()));
         }
         return GSON.toJson(arr);
     }
@@ -129,10 +120,17 @@ public class PlayerDataManager {
             JsonObject obj = el.getAsJsonObject();
             int slot = obj.get("slot").getAsInt();
             if (obj.has("nbt")) {
-                NbtCompound nbt = jsonToNbt(obj.get("nbt").getAsJsonObject());
-                ItemStack.CODEC.parse(lookup.getOps(NbtOps.INSTANCE), nbt)
-                        .result()
-                        .ifPresent(stack -> player.getInventory().setStack(slot, stack));
+                String nbtString = obj.get("nbt").getAsString();
+                try {
+                    NbtCompound nbt = net.minecraft.nbt.StringNbtReader.readCompound(nbtString);
+                    {
+                        ItemStack.CODEC.parse(lookup.getOps(NbtOps.INSTANCE), nbt)
+                                .result()
+                                .ifPresent(stack -> player.getInventory().setStack(slot, stack));
+                    }
+                } catch (Exception e) {
+                    LOGGER.warn("スロット{}の復元に失敗: {}", slot, e.getMessage());
+                }
             }
         }
     }
@@ -140,54 +138,17 @@ public class PlayerDataManager {
     private void deserializeEffects(ServerPlayerEntity player, String json) {
         JsonArray arr = JsonParser.parseString(json).getAsJsonArray();
         for (JsonElement el : arr) {
-            NbtCompound nbt = jsonToNbt(el.getAsJsonObject());
-            StatusEffectInstance.CODEC
-                    .parse(NbtOps.INSTANCE, nbt)
-                    .result()
-                    .ifPresent(player::addStatusEffect);
-        }
-    }
-
-    // -------------------------------------------------------------------
-    // NbtCompound ↔ JsonObject
-    // -------------------------------------------------------------------
-
-    private JsonObject nbtToJson(NbtCompound nbt) {
-        JsonObject obj = new JsonObject();
-        for (String key : nbt.getKeys()) {
-            obj.add(key, nbtElementToJson(nbt.get(key)));
-        }
-        return obj;
-    }
-
-    private JsonElement nbtElementToJson(NbtElement el) {
-        if (el instanceof NbtCompound c) return nbtToJson(c);
-        if (el instanceof NbtList list) {
-            JsonArray arr = new JsonArray();
-            for (NbtElement item : list) arr.add(nbtElementToJson(item));
-            return arr;
-        }
-        return new JsonPrimitive(el.toString());
-    }
-
-    private NbtCompound jsonToNbt(JsonObject obj) {
-        NbtCompound nbt = new NbtCompound();
-        for (var entry : obj.entrySet()) putNbtValue(nbt, entry.getKey(), entry.getValue());
-        return nbt;
-    }
-
-    private void putNbtValue(NbtCompound nbt, String key, JsonElement el) {
-        if (el.isJsonObject()) {
-            nbt.put(key, jsonToNbt(el.getAsJsonObject()));
-        } else if (el.isJsonArray()) {
-            NbtList list = new NbtList();
-            for (JsonElement item : el.getAsJsonArray()) {
-                if (item.isJsonObject()) list.add(jsonToNbt(item.getAsJsonObject()));
-                else list.add(NbtString.of(item.getAsString()));
+            try {
+                NbtCompound nbt = net.minecraft.nbt.StringNbtReader.readCompound(el.getAsString());
+                {
+                    StatusEffectInstance.CODEC
+                            .parse(NbtOps.INSTANCE, nbt)
+                            .result()
+                            .ifPresent(player::addStatusEffect);
+                }
+            } catch (Exception e) {
+                LOGGER.warn("エフェクト復元に失敗: {}", e.getMessage());
             }
-            nbt.put(key, list);
-        } else {
-            nbt.putString(key, el.getAsString());
         }
     }
 }
