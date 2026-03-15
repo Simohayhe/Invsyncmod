@@ -1,21 +1,18 @@
 package net.simohaya.invsyncmod;
 
 import com.google.gson.*;
-import net.minecraft.inventory.Inventories;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
+import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtList;
 import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.NbtString;
-import net.minecraft.nbt.NbtElement;
 import net.minecraft.registry.RegistryWrapper;
 import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.util.collection.DefaultedList;
 import net.minecraft.entity.effect.StatusEffectInstance;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Collection;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -88,15 +85,24 @@ public class PlayerDataManager {
     // -------------------------------------------------------------------
 
     private String serializeInventory(ServerPlayerEntity player, RegistryWrapper.WrapperLookup lookup) {
-        // メイン(36) + オフハンド(1) + 防具(4) = 41スロット全部まとめて保存
-        DefaultedList<ItemStack> combined = DefaultedList.ofSize(41, ItemStack.EMPTY);
-        for (int i = 0; i < 36; i++) combined.set(i, player.getInventory().getStack(i));
-        combined.set(36, player.getInventory().getStack(40)); // オフハンド
-        for (int i = 0; i < 4; i++) combined.set(37 + i, player.getInventory().getStack(36 + i)); // 防具
-
-        NbtCompound nbt = new NbtCompound();
-        Inventories.writeNbt(nbt, combined, true, lookup);
-        return GSON.toJson(nbtToJson(nbt));
+        JsonArray arr = new JsonArray();
+        // メイン36 + 防具4 + オフハンド1 = 合計41スロット
+        int total = player.getInventory().size();
+        for (int i = 0; i < total; i++) {
+            ItemStack stack = player.getInventory().getStack(i);
+            if (!stack.isEmpty()) {
+                JsonObject obj = new JsonObject();
+                obj.addProperty("slot", i);
+                // ItemStack.CODEC でシリアライズ
+                ItemStack.CODEC.encodeStart(lookup.getOps(NbtOps.INSTANCE), stack)
+                        .result()
+                        .ifPresent(tag -> {
+                            if (tag instanceof NbtCompound c) obj.add("nbt", nbtToJson(c));
+                        });
+                arr.add(obj);
+            }
+        }
+        return GSON.toJson(arr);
     }
 
     private String serializeEffects(ServerPlayerEntity player) {
@@ -117,13 +123,18 @@ public class PlayerDataManager {
     // -------------------------------------------------------------------
 
     private void deserializeInventory(ServerPlayerEntity player, String json, RegistryWrapper.WrapperLookup lookup) {
-        NbtCompound nbt = jsonToNbt(JsonParser.parseString(json).getAsJsonObject());
-        DefaultedList<ItemStack> combined = DefaultedList.ofSize(41, ItemStack.EMPTY);
-        Inventories.readNbt(nbt, combined, lookup);
-
-        for (int i = 0; i < 36; i++) player.getInventory().setStack(i, combined.get(i));
-        player.getInventory().setStack(40, combined.get(36)); // オフハンド
-        for (int i = 0; i < 4; i++) player.getInventory().setStack(36 + i, combined.get(37 + i)); // 防具
+        JsonArray arr = JsonParser.parseString(json).getAsJsonArray();
+        player.getInventory().clear();
+        for (JsonElement el : arr) {
+            JsonObject obj = el.getAsJsonObject();
+            int slot = obj.get("slot").getAsInt();
+            if (obj.has("nbt")) {
+                NbtCompound nbt = jsonToNbt(obj.get("nbt").getAsJsonObject());
+                ItemStack.CODEC.parse(lookup.getOps(NbtOps.INSTANCE), nbt)
+                        .result()
+                        .ifPresent(stack -> player.getInventory().setStack(slot, stack));
+            }
+        }
     }
 
     private void deserializeEffects(ServerPlayerEntity player, String json) {
