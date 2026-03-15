@@ -1,9 +1,11 @@
 package net.simohaya.invsyncmod;
 
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.simohaya.invsyncmod.events.PlayerJoinHandler;
 import net.simohaya.invsyncmod.events.PlayerLeaveHandler;
+import net.minecraft.server.network.ServerPlayerEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,6 +46,16 @@ public class Invsyncmod implements ModInitializer {
         // イベント登録
         new PlayerJoinHandler(playerDataManager).register();
         new PlayerLeaveHandler(playerDataManager, serverName).register();
+
+        // 1秒ごとの定期同期を登録
+        ServerTickEvents.END_SERVER_TICK.register(server -> {
+            // 20tick = 1秒ごとに実行
+            if (server.getTicks() % 20 == 0) {
+                for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
+                    playerDataManager.savePlayer(player, serverName);
+                }
+            }
+        });
 
         // サーバー停止時に DB 接続を閉じる
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
