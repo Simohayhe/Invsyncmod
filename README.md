@@ -27,7 +27,7 @@ Fabric API / Quilt Standard Libraries
 
 MySQL または MariaDB データベース
 
-(推奨) サーバーネットワーク環境（Velocity, BungeeCord, Waterfall等）
+(推奨) サーバーネットワーク環境（Velocity, BungeeCord, Waterfall等） 
 
 ⚠️ 注意事項
 バックアップ推奨: 初めて導入する際は、必ずワールドデータとプレイヤーデータのバックアップを取ってください。
